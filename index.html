@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dr. Strange AR - System Check</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        
+        /* 视频层：半透明显示，让你看到自己 */
+        #video-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0; opacity: 0.4; /* 稍微暗一点，突显特效 */
+        }
+        video {
+            width: 100%; height: 100%; object-fit: cover;
+            transform: scaleX(-1); /* 镜像翻转，像照镜子一样 */
+        }
+
+        /* 3D 特效层 */
+        #canvas-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; pointer-events: none;
+        }
+
+        /* 交互 UI */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        /* 启动按钮 (遮罩) */
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            pointer-events: auto;
+        }
+        button {
+            background: #ffaa00; border: 2px solid #fff; color: #000;
+            padding: 15px 40px; font-size: 20px; font-weight: bold;
+            cursor: pointer; border-radius: 50px;
+            box-shadow: 0 0 20px #ffaa00;
+            transition: transform 0.2s;
+        }
+        button:active { transform: scale(0.95); }
+        .error-msg { color: #ff3333; margin-top: 20px; max-width: 80%; text-align: center; line-height: 1.5; }
+
+        /* 状态面板 */
+        #debug-panel {
+            padding: 10px; color: #00ff00; font-family: monospace; font-size: 12px;
+            text-shadow: 1px 1px 0 #000;
+        }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #333; margin-right: 5px; }
+        .active { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
+        .loading { background: #ffaa00; animation: blink 0.5s infinite; }
+
+        @keyframes blink { 50% { opacity: 0.5; } }
+    </style>
+    
+    <!-- 引入 MediaPipe (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- 引入 Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <!-- 启动界面 -->
+    <div id="start-screen">
+        <h1 style="color:#ffaa00; margin-bottom:10px;">SANCTUM SANCTORUM</h1>
+        <p style="color:#aaa; margin-bottom:30px;">System Check: WebGL & Camera</p>
+        <button id="start-btn" onclick="startApp()">开启魔法阵 (Start Magic)</button>
+        <div id="error-log" class="error-msg"></div>
+    </div>
+
+    <!-- 视频背景 -->
+    <div id="video-container">
+        <video id="input_video" playsinline></video>
+    </div>
+
+    <!-- 3D 画布 -->
+    <div id="canvas-container"></div>
+
+    <!-- UI 面板 -->
+    <div id="ui-layer">
+        <div id="debug-panel">
+            <div><span id="dot-cam" class="status-dot"></span>CAMERA</div>
+            <div><span id="dot-ai" class="status-dot"></span>HAND TRACKING</div>
+            <div><span id="dot-3d" class="status-dot"></span>SPELL RENDER</div>
+            <div id="fps" style="margin-top:5px; opacity:0.7">Wait for start...</div>
+            <div id="gesture-name" style="margin-top:10px; font-size:16px; font-weight:bold; color:#ffaa00">NONE</div>
+        </div>
+    </div>
+
+    <script>
+        // === 0. 环境自检 (Global Error Handler) ===
+        const log = document.getElementById('error-log');
+        const isFileProtocol = window.location.protocol === 'file:';
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const isSecure = window.location.protocol === 'https:';
+
+        if (isFileProtocol) {
+            log.innerHTML = "⚠️ <b>错误运行环境</b><br>浏览器禁止直接打开文件调用摄像头。<br>请使用 VS Code 'Live Server' 或上传至 GitHub Pages。<br>(不要双击 html 文件打开)";
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('start-btn').style.background = '#555';
+        } else if (!isLocalhost && !isSecure) {
+            log.innerHTML = "⚠️ <b>非安全连接</b><br>摄像头需要 HTTPS 或 Localhost 环境。";
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // === 全局变量 ===
+        let camera3D, scene, renderer, composer;
+        let shieldGroup, particles, timeRing, layerCore, layerMid, layerOut;
+        let activeHand = null;
+        let currentState = 'SHIELD'; // SHIELD, TIME, CHAOS
+        
+        // 状态指示器
+        const dotCam = document.getElementById('dot-cam');
+        const dotAi = document.getElementById('dot-ai');
+        const dot3d = document.getElementById('dot-3d');
+        const gestureText = document.getElementById('gesture-name');
+
+        // === 1. 初始化 Three.js (魔法视觉) ===
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            scene = new THREE.Scene();
+            camera3D = new THREE.PerspectiveCamera(60, w / h, 0.1, 100);
+            camera3D.position.z = 10;
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+            renderer.setSize(w, h);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            container.appendChild(renderer.domElement);
+
+            // 辉光效果
+            const renderScene = new RenderPass(scene, camera3D);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0;
+            bloomPass.strength = 2.2; 
+            bloomPass.radius = 0.4;
+            
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            createMagicAssets();
+            dot3d.classList.add('active');
+        }
+
+        // === 2. 纹理生成与模型构建 ===
+        function createMagicAssets() {
+            // 绘制纹理
+            const size = 1024;
+            const cvs = document.createElement('canvas'); cvs.width = cvs.height = size;
+            const ctx = cvs.getContext('2d');
+            const cx = size/2, cy = size/2;
+
+            function glowLine(w, alpha) {
+                ctx.shadowBlur = w; ctx.shadowColor = 'white';
+                ctx.strokeStyle = `rgba(255,255,255,${alpha})`; ctx.lineWidth = w;
+            }
+
+            // 绘制
+            glowLine(5, 1);
+            ctx.translate(cx, cy);
+            // 方阵
+            for(let i=0; i<2; i++) {
+                ctx.rotate(Math.PI/4); ctx.strokeRect(-250, -250, 500, 500);
+            }
+            // 圆环
+            ctx.beginPath(); ctx.arc(0,0, 360, 0, Math.PI*2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(0,0, 480, 0, Math.PI*2); ctx.stroke();
+            
+            // 简单符文模拟
+            ctx.beginPath();
+            for(let i=0; i<32; i++) {
+                ctx.rotate(Math.PI*2/32);
+                ctx.moveTo(0, -400); ctx.lineTo(10, -420); ctx.lineTo(0, -440);
+            }
+            ctx.stroke();
+
+            const tex = new THREE.CanvasTexture(cvs);
+            const mat = new THREE.MeshBasicMaterial({ 
+                map: tex, color: 0xffaa00, transparent: true, side: THREE.DoubleSide, 
+                blending: THREE.AdditiveBlending, depthWrite: false 
+            });
+
+            shieldGroup = new THREE.Group();
+            scene.add(shieldGroup);
+            shieldGroup.visible = false;
+
+            layerCore = new THREE.Mesh(new THREE.PlaneGeometry(5,5), mat.clone());
+            layerMid = new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat.clone());
+            layerOut = new THREE.Mesh(new THREE.PlaneGeometry(9,9), mat.clone());
+            
+            layerMid.position.z = 0.5; layerMid.rotation.z = Math.PI/4;
+            layerOut.position.z = 1.0;
+
+            // 粒子
+            const pGeo = new THREE.BufferGeometry();
+            const pos = [];
+            for(let i=0; i<300; i++) pos.push((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*2);
+            pGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            particles = new THREE.Points(pGeo, new THREE.PointsMaterial({color:0xffaa00, size:0.15, transparent:true, blending:THREE.AdditiveBlending}));
+
+            // 时间环
+            timeRing = new THREE.Mesh(new THREE.TorusGeometry(3, 0.05, 16, 100), mat.clone());
+            timeRing.visible = false;
+
+            shieldGroup.add(layerCore, layerMid, layerOut, particles, timeRing);
+        }
+
+        // === 3. 核心逻辑：App 启动 ===
+        window.startApp = async function() {
+            const btn = document.getElementById('start-btn');
+            btn.innerText = "正在初始化 (Initializing)...";
+            btn.disabled = true;
+            document.getElementById('error-log').innerText = "";
+
+            try {
+                initThree();
+                await initMediaPipe();
+                document.getElementById('start-screen').style.display = 'none'; // 隐藏启动页
+                animate();
+            } catch (e) {
+                console.error(e);
+                document.getElementById('error-log').innerHTML = "启动失败: " + e.message + "<br>请检查摄像头权限或更换浏览器。";
+                btn.innerText = "重试";
+                btn.disabled = false;
+            }
+        };
+
+        // === 4. MediaPipe 初始化 ===
+        async function initMediaPipe() {
+            dotAi.classList.add('loading');
+            
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            const video = document.getElementById('input_video');
+            
+            // 手动调用 getUserMedia 以确保能捕获错误
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+                video.srcObject = stream;
+                await video.play();
+                dotCam.classList.add('active');
+            } catch (err) {
+                throw new Error("无法获取摄像头: " + err.name);
+            }
+
+            const camera = new Camera(video, {
+                onFrame: async () => {
+                    await hands.send({image: video});
+                },
+                width: 1280,
+                height: 720
+            });
+            
+            // 启动 camera utils loop
+            camera.start(); 
+        }
+
+        // === 5. 手势识别与更新 ===
+        function onResults(results) {
+            dotAi.classList.remove('loading');
+            dotAi.classList.add('active');
+
+            if (results.multiHandLandmarks.length > 0) {
+                activeHand = results.multiHandLandmarks[0];
+                shieldGroup.visible = true;
+                detectGesture(activeHand);
+            } else {
+                activeHand = null;
+                // 没手时平滑缩小消失
+                if(shieldGroup.visible) shieldGroup.scale.lerp(new THREE.Vector3(0,0,0), 0.1);
+                if(shieldGroup.scale.x < 0.01) shieldGroup.visible = false;
+                gestureText.innerText = "SEARCHING...";
+            }
+        }
+
+        function detectGesture(landmarks) {
+            const thumb = landmarks[4];
+            const index = landmarks[8];
+            const wrist = landmarks[0];
+            const midTip = landmarks[12];
+            const midBase = landmarks[9];
+
+            // 1. 捏合 (Pinch) - 拇指食指距离
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            
+            // 2. 握拳 (Fist) - 指尖到手腕平均距离
+            const tips = [8,12,16,20];
+            const avgDist = tips.reduce((sum, i) => sum + Math.hypot(landmarks[i].x - wrist.x, landmarks[i].y - wrist.y), 0) / 4;
+
+            let nextState = 'SHIELD';
+            if (avgDist < 0.25) nextState = 'CHAOS'; // 握拳阈值 (根据实际调节)
+            else if (pinchDist < 0.08) nextState = 'TIME'; // 捏合阈值
+
+            updateSpellVisuals(nextState);
+
+            // === 3D 追踪逻辑 ===
+            // MediaPipe x坐标是 0-1, 我们视频翻转了，所以 x 需要 1-x
+            // 视口映射：假设 Z=10，视野宽度大概 18，高度 10
+            
+            const x = (1 - midBase.x - 0.5) * 18; 
+            const y = -(midBase.y - 0.5) * 10;
+            
+            // 姿态倾斜
+            const tiltX = (midTip.y - wrist.y) * 4;
+            const tiltY = ((1-midTip.x) - (1-wrist.x)) * 4;
+
+            // 平滑应用
+            shieldGroup.position.lerp(new THREE.Vector3(x, y, 0), 0.2);
+            
+            // 旋转插值
+            shieldGroup.rotation.x += (tiltX - shieldGroup.rotation.x) * 0.1;
+            shieldGroup.rotation.y += (tiltY - shieldGroup.rotation.y) * 0.1;
+
+            // 视差位移
+            layerMid.position.x = shieldGroup.rotation.y * 0.5;
+            layerOut.position.x = shieldGroup.rotation.y * 1.0;
+            particles.position.x = shieldGroup.rotation.y * 1.5;
+            
+            // 缩放
+            let targetScale = (avgDist * 6); // 根据手的大小自动缩放
+            if (nextState === 'CHAOS') targetScale *= 0.6; // 握拳变小
+            shieldGroup.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+        }
+
+        function updateSpellVisuals(state) {
+            currentState = state;
+            let color = new THREE.Color(0xffaa00);
+            
+            if (state === 'TIME') {
+                color.setHex(0x00ff00);
+                timeRing.visible = true;
+                layerCore.visible = false;
+                gestureText.innerText = "TIME STONE (PINCH)";
+                gestureText.style.color = "#00ff00";
+            } else if (state === 'CHAOS') {
+                color.setHex(0xff0000);
+                timeRing.visible = false;
+                layerCore.visible = true;
+                gestureText.innerText = "CHAOS MAGIC (FIST)";
+                gestureText.style.color = "#ff0000";
+            } else {
+                timeRing.visible = false;
+                layerCore.visible = true;
+                gestureText.innerText = "SHIELD (OPEN)";
+                gestureText.style.color = "#ffaa00";
+            }
+
+            // 统一变色
+            layerCore.material.color.lerp(color, 0.1);
+            layerMid.material.color.lerp(color, 0.1);
+            layerOut.material.color.lerp(color, 0.1);
+            timeRing.material.color.lerp(color, 0.1);
+            particles.material.color.lerp(color, 0.1);
+        }
+
+        // === 6. 动画循环 ===
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+            
+            // 自转动画
+            let speed = 1;
+            if (currentState === 'TIME') speed = -2; // 倒流
+            if (currentState === 'CHAOS') speed = 5; // 狂暴
+
+            layerCore.rotation.z = t * 0.2 * speed;
+            layerMid.rotation.z = -t * 0.15 * speed;
+            layerOut.rotation.z = t * 0.05 * speed;
+            timeRing.rotation.x = t * 2;
+            timeRing.rotation.y = t * 0.5;
+
+            // 粒子抖动
+            const pPos = particles.geometry.attributes.position.array;
+            if (currentState === 'CHAOS') {
+                for(let i=0; i<pPos.length; i++) pPos[i] += (Math.random()-0.5)*0.1;
+                particles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            composer.render();
+        }
+
+        // 窗口自适应
+        window.addEventListener('resize', () => {
+            camera3D.aspect = window.innerWidth / window.innerHeight;
+            camera3D.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
