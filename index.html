@@ -3,75 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Dr. Strange AR - V3 Debug</title>
+    <title>Dr. Strange AR - V4 Stable</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: monospace; }
-        
-        /* 1. 视频层 */
+        /* 1. 基础设置：移除所有背景色，防止遮挡 */
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
+            background-color: #000; /* 兜底黑色 */
+        }
+
+        /* 2. 视频层：强制可见，不做透明处理 */
         #video-container {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 0; opacity: 0.8;
+            z-index: 0; /* 最底层 */
         }
         video {
             width: 100%; height: 100%; object-fit: cover;
-            transform: scaleX(-1); /* 镜像翻转 */
+            transform: scaleX(-1); /* 视频镜像，让你像照镜子 */
+            display: block;
         }
 
-        /* 2. 调试画布 (关键修改：通过CSS翻转，避免JS计算错误) */
+        /* 3. 骨架调试层：在视频之上 */
         #debug-canvas {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             z-index: 1; pointer-events: none;
-            transform: scaleX(-1); /* 让画布也镜像，这样画图坐标就对了 */
+            /* 注意：这里不再用 CSS 翻转，我们在 JS 里翻转，防止错位 */
         }
 
-        /* 3. 特效层 */
+        /* 4. 特效层：最上层 */
         #three-container {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             z-index: 2; pointer-events: none;
         }
 
-        /* 4. UI 面板 (强制置顶，强制显示) */
+        /* 5. UI 面板 */
         #ui-layer {
             position: absolute; top: 10px; left: 10px; z-index: 999;
             pointer-events: none;
-            display: block !important; /* 强制显示 */
         }
-        
         .hud-box {
-            background: rgba(0, 0, 0, 0.7);
-            border: 2px solid #00ff00;
-            color: #00ff00;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            font-size: 14px;
-            box-shadow: 0 0 10px #000;
-            min-width: 150px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid #00ff00;
+            color: #00ff00; padding: 10px; border-radius: 4px;
+            margin-bottom: 5px; font-family: monospace; font-size: 12px;
+            text-shadow: 1px 1px 0 #000; width: 160px;
         }
-
-        h3 { margin: 0 0 10px 0; color: #ffaa00; border-bottom: 1px solid #555; padding-bottom: 5px; }
 
         /* 启动屏 */
         #start-screen {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: #000; z-index: 1000;
+            background: #111; z-index: 1000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             pointer-events: auto;
         }
         button {
-            background: #00ff00; border: none; color: #000;
-            padding: 20px 50px; font-size: 24px; font-weight: bold;
-            cursor: pointer; border-radius: 10px; margin-top: 20px;
+            background: #ffaa00; border: none; color: #000;
+            padding: 15px 40px; font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 5px;
         }
     </style>
     
-    <!-- 引入库 -->
+    <!-- 引入 MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <!-- Three.js -->
+    <!-- 引入 Three.js -->
     <script type="importmap">
         {
             "imports": {
@@ -83,29 +79,25 @@
 </head>
 <body>
 
-    <!-- 启动屏 -->
     <div id="start-screen">
-        <h1 style="color:#00ff00; text-align:center;">SYSTEM V3.0<br>READY</h1>
-        <p style="color:#fff">点击下方按钮启动</p>
-        <button onclick="startApp()">INITIATE (启动)</button>
+        <h1 style="color:#ffaa00">V4.0 最终修复</h1>
+        <p style="color:#888">解决黑屏与骨架不显示问题</p>
+        <button onclick="startApp()">启动系统 (START)</button>
     </div>
 
-    <!-- UI 层 (必须常驻) -->
+    <!-- UI -->
     <div id="ui-layer">
         <div class="hud-box">
-            <h3>V3.0 DEBUG</h3>
-            <div>FPS: <span id="fps-counter">0</span></div>
-            <div>HAND: <span id="hand-status" style="color:red">NO SIGNAL</span></div>
+            <div style="font-size:16px; font-weight:bold; color:#ffaa00; border-bottom:1px solid #555; margin-bottom:5px;">V4.0 MONITOR</div>
+            <div>STATUS: <span id="sys-status" style="color:red">WAITING</span></div>
         </div>
         <div class="hud-box">
-            <div>GESTURE: <span id="gesture-name" style="font-weight:bold; font-size:18px">---</span></div>
-            <hr style="border:0; border-top:1px solid #444; margin:5px 0">
-            <div>Open (Shield): <span id="val-open">0.0</span></div>
-            <div>Pinch (Time): <span id="val-pinch">0.0</span></div>
+            <div>GESTURE: <span id="gesture-txt" style="font-weight:bold; font-size:14px; color:white">---</span></div>
+            <div>Conf (Open): <span id="val-open">0.00</span></div>
+            <div>Conf (Pinch): <span id="val-pinch">0.00</span></div>
         </div>
     </div>
 
-    <!-- 渲染层 -->
     <div id="video-container"><video id="input_video" playsinline></video></div>
     <canvas id="debug-canvas"></canvas>
     <div id="three-container"></div>
@@ -116,17 +108,14 @@
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-        // 全局变量
-        let camera3D, scene, renderer, composer;
-        let shieldGroup, particles, timeRing, layerCore, layerMid, layerOut;
+        let scene, camera3D, renderer, composer;
+        let shieldGroup, particles, timeRing, layers = [];
         let activeHand = null;
-        let currentState = 'SHIELD';
         
-        // 调试 Canvas
+        // 调试画布
         const debugCanvas = document.getElementById('debug-canvas');
         const debugCtx = debugCanvas.getContext('2d');
 
-        // === 1. 启动入口 ===
         window.startApp = function() {
             document.getElementById('start-screen').style.display = 'none';
             initThree();
@@ -134,7 +123,6 @@
             animate();
         };
 
-        // === 2. MediaPipe 初始化 ===
         async function initMediaPipe() {
             const video = document.getElementById('input_video');
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
@@ -145,7 +133,6 @@
                 minDetectionConfidence: 0.5,
                 minTrackingConfidence: 0.5
             });
-            
             hands.onResults(onResults);
 
             const cam = new Camera(video, {
@@ -155,97 +142,94 @@
             cam.start();
         }
 
-        // === 3. 核心：手势处理与绘图 ===
+        // === 核心修复：手动绘制镜像骨架 ===
         function onResults(results) {
-            // 设置 Canvas 尺寸 (每一帧都重置，防止拉伸)
-            debugCanvas.width = window.innerWidth; 
+            // 1. 设置 Canvas 尺寸
+            debugCanvas.width = window.innerWidth;
             debugCanvas.height = window.innerHeight;
+            
+            // 2. 清空画布
             debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
+            // 3. 准备镜像绘制环境 (Fix: 这里的代码确保骨架能画出来)
+            debugCtx.save();
+            debugCtx.scale(-1, 1); // 水平翻转画笔
+            debugCtx.translate(-debugCanvas.width, 0); // 移动坐标原点
+
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                // 状态更新
-                document.getElementById('hand-status').innerText = "LOCKED";
-                document.getElementById('hand-status').style.color = "#00ff00";
-                
+                document.getElementById('sys-status').innerText = "TRACKING";
+                document.getElementById('sys-status').style.color = "#00ff00";
+
                 const landmarks = results.multiHandLandmarks[0];
                 activeHand = landmarks;
                 shieldGroup.visible = true;
 
-                // --- 1. 绘制骨架 (这是你要的可视化) ---
-                // 使用 try-catch 防止绘图库加载失败导致崩坏
-                try {
-                    if (window.drawConnectors && window.HAND_CONNECTIONS) {
-                        debugCtx.lineWidth = 3;
-                        drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff00'});
-                        drawLandmarks(debugCtx, landmarks, {color: '#ff0000', lineWidth: 2, radius: 4});
-                    }
-                } catch (e) {
-                    console.error("绘图错误:", e);
+                // 4. 强制绘制骨架 (Explicit Drawing)
+                // 绘制连线
+                if(window.drawConnectors) {
+                    drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff00', lineWidth: 3});
+                }
+                // 绘制红点
+                if(window.drawLandmarks) {
+                    drawLandmarks(debugCtx, landmarks, {color: '#ff0000', lineWidth: 2, radius: 4});
                 }
 
-                // --- 2. 手势计算 ---
-                const wrist = landmarks[0];
-                const middleBase = landmarks[9];
-                const palmSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y); // 手掌基准大小
-
-                // 握拳判定 (指尖到手腕平均距离)
-                const tips = [8, 12, 16, 20];
-                let tipSum = 0;
-                tips.forEach(i => tipSum += Math.hypot(landmarks[i].x - wrist.x, landmarks[i].y - wrist.y));
-                const openness = (tipSum / 4) / palmSize; // > 1.0 张开, < 0.6 握拳
-
-                // 捏合判定 (拇指到食指)
-                const thumb = landmarks[4];
-                const index = landmarks[8];
-                const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y) / palmSize; // < 0.25 捏合
-
-                // UI 数据更新
-                document.getElementById('val-open').innerText = openness.toFixed(2);
-                document.getElementById('val-pinch').innerText = pinch.toFixed(2);
-
-                let newState = 'SHIELD';
-                const label = document.getElementById('gesture-name');
-
-                if (openness < 0.8) {
-                    newState = 'CHAOS';
-                    label.innerText = "CHAOS (FIST)";
-                    label.style.color = "red";
-                } else if (pinch < 0.3) {
-                    newState = 'TIME';
-                    label.innerText = "TIME (PINCH)";
-                    label.style.color = "#00ff00";
-                } else {
-                    newState = 'SHIELD';
-                    label.innerText = "SHIELD (OPEN)";
-                    label.style.color = "orange";
-                }
-
-                updateMagicState(newState, landmarks);
+                // 5. 手势计算
+                processGesture(landmarks);
 
             } else {
-                document.getElementById('hand-status').innerText = "SEARCHING";
-                document.getElementById('hand-status').style.color = "red";
-                document.getElementById('val-open').innerText = "0.0";
+                document.getElementById('sys-status').innerText = "SEARCHING";
+                document.getElementById('sys-status').style.color = "orange";
                 if(shieldGroup) shieldGroup.visible = false;
             }
+
+            debugCtx.restore(); // 恢复画笔状态
         }
 
-        // === 4. 特效逻辑 (Three.js) ===
+        function processGesture(landmarks) {
+            const wrist = landmarks[0];
+            const midBase = landmarks[9];
+            const palmSize = Math.hypot(wrist.x - midBase.x, wrist.y - midBase.y);
+
+            // 握拳判定
+            let tipDistSum = 0;
+            [8,12,16,20].forEach(i => tipDistSum += Math.hypot(landmarks[i].x - wrist.x, landmarks[i].y - wrist.y));
+            const openness = (tipDistSum / 4) / palmSize;
+
+            // 捏合判定
+            const pinch = Math.hypot(landmarks[4].x - landmarks[8].x, landmarks[4].y - landmarks[8].y) / palmSize;
+
+            document.getElementById('val-open').innerText = openness.toFixed(2);
+            document.getElementById('val-pinch').innerText = pinch.toFixed(2);
+
+            let state = 'SHIELD';
+            let txt = document.getElementById('gesture-txt');
+
+            if(openness < 0.8) {
+                state = 'CHAOS'; txt.innerText = "CHAOS (FIST)"; txt.style.color = "red";
+            } else if (pinch < 0.25) {
+                state = 'TIME'; txt.innerText = "TIME (PINCH)"; txt.style.color = "#00ff00";
+            } else {
+                state = 'SHIELD'; txt.innerText = "SHIELD (OPEN)"; txt.style.color = "#ffaa00";
+            }
+
+            updateMagic(state, landmarks, palmSize);
+        }
+
+        // === Three.js 逻辑 ===
         function initThree() {
             const container = document.getElementById('three-container');
             scene = new THREE.Scene();
-            camera3D = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera3D = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
             camera3D.position.z = 10;
-            
-            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+            renderer = new THREE.WebGLRenderer({alpha: true, antialias: false});
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             container.appendChild(renderer.domElement);
-
+            
             const renderScene = new RenderPass(scene, camera3D);
             const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
             bloomPass.strength = 2.5; bloomPass.radius = 0.5; bloomPass.threshold = 0;
-            
             composer = new EffectComposer(renderer);
             composer.addPass(renderScene);
             composer.addPass(bloomPass);
@@ -254,16 +238,15 @@
         }
 
         function createAssets() {
-            // 简单高清纹理
             const cvs = document.createElement('canvas'); cvs.width=1024; cvs.height=1024;
             const ctx = cvs.getContext('2d');
             ctx.translate(512,512);
-            ctx.strokeStyle='white'; ctx.shadowColor='white'; ctx.shadowBlur=10; ctx.lineWidth=5;
-            // 绘制
+            ctx.strokeStyle='white'; ctx.lineWidth=5; ctx.shadowColor='white'; ctx.shadowBlur=10;
+            
             ctx.save();
-            for(let i=0;i<2;i++) { ctx.rotate(Math.PI/4); ctx.strokeRect(-300,-300,600,600); }
+            for(let i=0; i<2; i++) { ctx.rotate(Math.PI/4); ctx.strokeRect(-300,-300,600,600); }
             ctx.restore();
-            ctx.beginPath(); ctx.arc(0,0,420,0,Math.PI*2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(0,0,440,0,Math.PI*2); ctx.stroke();
             
             const tex = new THREE.CanvasTexture(cvs);
             const mat = new THREE.MeshBasicMaterial({map:tex, color:0xffaa00, transparent:true, side:THREE.DoubleSide, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -271,68 +254,68 @@
             shieldGroup = new THREE.Group();
             scene.add(shieldGroup);
             
-            layerCore = new THREE.Mesh(new THREE.PlaneGeometry(5,5), mat.clone());
-            layerMid = new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat.clone()); layerMid.position.z = 0.5;
-            layerOut = new THREE.Mesh(new THREE.PlaneGeometry(9,9), mat.clone()); layerOut.position.z = 1.0;
-            timeRing = new THREE.Mesh(new THREE.TorusGeometry(3, 0.1, 16, 60), mat.clone()); timeRing.visible=false;
+            layers = [];
+            layers.push(new THREE.Mesh(new THREE.PlaneGeometry(5,5), mat.clone()));
+            layers.push(new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat.clone())); layers[1].position.z=0.5;
+            layers.push(new THREE.Mesh(new THREE.PlaneGeometry(9,9), mat.clone())); layers[2].position.z=1.0;
             
+            layers.forEach(l => shieldGroup.add(l));
+
+            timeRing = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.1, 16, 60), mat.clone());
+            timeRing.visible = false;
+            shieldGroup.add(timeRing);
+
             const pGeo = new THREE.BufferGeometry();
             const pArr = new Float32Array(600);
             for(let i=0;i<600;i++) pArr[i] = (Math.random()-0.5)*10;
             pGeo.setAttribute('position', new THREE.BufferAttribute(pArr, 3));
             particles = new THREE.Points(pGeo, new THREE.PointsMaterial({color:0xffaa00, size:0.1, transparent:true, blending:THREE.AdditiveBlending}));
+            shieldGroup.add(particles);
             
-            shieldGroup.add(layerCore, layerMid, layerOut, timeRing, particles);
+            shieldGroup.visible = false;
         }
 
-        function updateMagicState(state, landmarks) {
-            currentState = state;
-            let col = new THREE.Color(0xffaa00); // Orange
-            if(state==='TIME') { col.setHex(0x00ff00); timeRing.visible=true; layerCore.visible=false; }
-            else if(state==='CHAOS') { col.setHex(0xff0000); timeRing.visible=false; layerCore.visible=true; }
-            else { timeRing.visible=false; layerCore.visible=true; }
-
-            // 颜色插值
-            layerCore.material.color.lerp(col, 0.2);
-            layerMid.material.color.lerp(col, 0.2);
-            layerOut.material.color.lerp(col, 0.2);
-            particles.material.color.lerp(col, 0.2);
+        function updateMagic(state, landmarks, palmSize) {
+            let col = new THREE.Color(0xffaa00);
+            if(state === 'TIME') { col.setHex(0x00ff00); timeRing.visible=true; layers[0].visible=false; }
+            else if(state === 'CHAOS') { col.setHex(0xff0000); timeRing.visible=false; layers[0].visible=true; }
+            else { timeRing.visible=false; layers[0].visible=true; }
+            
+            layers.forEach(l => l.material.color.lerp(col, 0.2));
             timeRing.material.color.lerp(col, 0.2);
+            particles.material.color.lerp(col, 0.2);
 
-            // 位置映射
-            const midBase = landmarks[9];
-            const wrist = landmarks[0];
-            // MediaPipe x: 0-1, y: 0-1. 
-            // 屏幕中心是 (0.5, 0.5). ThreeJS 视口宽度~18, 高度~10
-            // 因为视频 scaleX(-1)，所以 x 坐标需要做对应反转逻辑：(1 - x)
-            // 但因为 canvas 也 scaleX(-1) 了，所以逻辑又负负得正了...
-            // 简单处理：
-            const x = (0.5 - midBase.x) * 18; 
-            const y = -(midBase.y - 0.5) * 10;
+            // 映射坐标 (MediaPipe 是 0-1)
+            // 这里的 X 不需要翻转逻辑，因为 Canvas 已经在外部翻转了显示（但坐标系未变）
+            // 我们需要根据视觉效果校准：
+            // 0.5 - landmarks.x (居中反转)
+            const x = (0.5 - landmarks[9].x) * 18; 
+            const y = -(landmarks[9].y - 0.5) * 10;
+            shieldGroup.position.lerp(new THREE.Vector3(x,y,0), 0.2);
             
-            shieldGroup.position.lerp(new THREE.Vector3(x, y, 0), 0.2);
+            const s = palmSize * 20;
+            shieldGroup.scale.lerp(new THREE.Vector3(s,s,s), 0.1);
+
+            // 视差
+            const rotY = (landmarks[12].x - landmarks[0].x) * 3;
+            const rotX = (landmarks[12].y - landmarks[0].y) * 3;
+            shieldGroup.rotation.x += (rotX - shieldGroup.rotation.x)*0.1;
+            shieldGroup.rotation.y += (rotY - shieldGroup.rotation.y)*0.1;
             
-            const tiltX = (landmarks[12].y - wrist.y) * 3;
-            const tiltY = (landmarks[12].x - wrist.x) * 3;
-            shieldGroup.rotation.x += (tiltX - shieldGroup.rotation.x)*0.1;
-            shieldGroup.rotation.y += (tiltY - shieldGroup.rotation.y)*0.1;
+            layers[1].position.x = shieldGroup.rotation.y * 0.5;
+            layers[2].position.x = shieldGroup.rotation.y * 1.0;
         }
 
+        const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            const t = performance.now() * 0.001;
-            document.getElementById('fps-counter').innerText = Math.round(1000 / ((t - (window.lastT||t))*1000) * 10 || 60); 
-            window.lastT = t;
-
-            let s = 1; 
-            if(currentState==='TIME') s=-2; 
-            if(currentState==='CHAOS') s=5;
+            const t = clock.getElapsedTime();
             
-            if(shieldGroup) {
-                layerCore.rotation.z = t * 0.2 * s;
-                layerMid.rotation.z = -t * 0.15 * s;
-                layerOut.rotation.z = t * 0.05 * s;
-                timeRing.rotation.x = t; timeRing.rotation.y = t*0.5;
+            if(shieldGroup.visible) {
+                layers[0].rotation.z = t * 0.2;
+                layers[1].rotation.z = -t * 0.15;
+                layers[2].rotation.z = t * 0.05;
+                timeRing.rotation.x = t*2; timeRing.rotation.y = t*0.5;
             }
             composer.render();
         }
