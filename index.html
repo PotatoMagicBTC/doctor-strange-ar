@@ -3,24 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Dr. Strange AR - Optimized</title>
+    <title>Dr. Strange AR - V3 Debug</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: monospace; }
         
-        /* 1. 视频层：调高亮度，让你看清自己 */
+        /* 1. 视频层 */
         #video-container {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 0; opacity: 0.8; /* 之前是0.4，现在改为0.8，更清晰 */
+            z-index: 0; opacity: 0.8;
         }
         video {
             width: 100%; height: 100%; object-fit: cover;
             transform: scaleX(-1); /* 镜像翻转 */
         }
 
-        /* 2. 调试层：绘制手部骨架 */
+        /* 2. 调试画布 (关键修改：通过CSS翻转，避免JS计算错误) */
         #debug-canvas {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             z-index: 1; pointer-events: none;
+            transform: scaleX(-1); /* 让画布也镜像，这样画图坐标就对了 */
         }
 
         /* 3. 特效层 */
@@ -29,44 +30,48 @@
             z-index: 2; pointer-events: none;
         }
 
-        /* UI 面板 */
+        /* 4. UI 面板 (强制置顶，强制显示) */
         #ui-layer {
-            position: absolute; top: 10px; left: 10px; z-index: 10;
-            color: #00ff00; font-family: monospace; font-size: 14px;
-            text-shadow: 1px 1px 2px black;
+            position: absolute; top: 10px; left: 10px; z-index: 999;
             pointer-events: none;
+            display: block !important; /* 强制显示 */
         }
-        .status-box {
-            background: rgba(0, 0, 0, 0.6);
-            padding: 10px; border-radius: 8px; border: 1px solid #444;
+        
+        .hud-box {
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
             margin-bottom: 10px;
-        }
-        #gesture-indicator {
-            font-size: 24px; font-weight: bold; color: #ffaa00;
-            transition: color 0.3s;
+            font-size: 14px;
+            box-shadow: 0 0 10px #000;
+            min-width: 150px;
         }
 
-        /* 启动按钮 */
+        h3 { margin: 0 0 10px 0; color: #ffaa00; border-bottom: 1px solid #555; padding-bottom: 5px; }
+
+        /* 启动屏 */
         #start-screen {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.95); z-index: 999;
+            background: #000; z-index: 1000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             pointer-events: auto;
         }
         button {
-            background: #ffaa00; border: none; color: #000;
-            padding: 15px 40px; font-size: 20px; font-weight: bold;
-            cursor: pointer; border-radius: 50px; margin-top: 20px;
+            background: #00ff00; border: none; color: #000;
+            padding: 20px 50px; font-size: 24px; font-weight: bold;
+            cursor: pointer; border-radius: 10px; margin-top: 20px;
         }
     </style>
     
-    <!-- 引入 MediaPipe -->
+    <!-- 引入库 -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <!-- 引入 Three.js -->
+    <!-- Three.js -->
     <script type="importmap">
         {
             "imports": {
@@ -78,29 +83,32 @@
 </head>
 <body>
 
+    <!-- 启动屏 -->
     <div id="start-screen">
-        <h1 style="color:#ffaa00">魔法阵系统 V2.0</h1>
-        <p style="color:#aaa">优化了手势识别与视野显示</p>
-        <button onclick="startApp()">启动摄像头</button>
+        <h1 style="color:#00ff00; text-align:center;">SYSTEM V3.0<br>READY</h1>
+        <p style="color:#fff">点击下方按钮启动</p>
+        <button onclick="startApp()">INITIATE (启动)</button>
     </div>
 
+    <!-- UI 层 (必须常驻) -->
+    <div id="ui-layer">
+        <div class="hud-box">
+            <h3>V3.0 DEBUG</h3>
+            <div>FPS: <span id="fps-counter">0</span></div>
+            <div>HAND: <span id="hand-status" style="color:red">NO SIGNAL</span></div>
+        </div>
+        <div class="hud-box">
+            <div>GESTURE: <span id="gesture-name" style="font-weight:bold; font-size:18px">---</span></div>
+            <hr style="border:0; border-top:1px solid #444; margin:5px 0">
+            <div>Open (Shield): <span id="val-open">0.0</span></div>
+            <div>Pinch (Time): <span id="val-pinch">0.0</span></div>
+        </div>
+    </div>
+
+    <!-- 渲染层 -->
     <div id="video-container"><video id="input_video" playsinline></video></div>
     <canvas id="debug-canvas"></canvas>
     <div id="three-container"></div>
-
-    <div id="ui-layer">
-        <div class="status-box">
-            <div>状态: <span id="status-text">等待启动...</span></div>
-            <div id="gesture-indicator">NONE</div>
-            <div style="font-size:10px; color:#aaa; margin-top:5px">
-                🖐 张开: 护盾<br>👌 捏合: 时间<br>✊ 握拳: 毁灭
-            </div>
-        </div>
-        <div class="status-box">
-            <div>手掌大小: <span id="palm-size">0</span></div>
-            <div>指尖距离: <span id="finger-dist">0</span></div>
-        </div>
-    </div>
 
     <script type="module">
         import * as THREE from 'three';
@@ -108,93 +116,26 @@
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+        // 全局变量
         let camera3D, scene, renderer, composer;
         let shieldGroup, particles, timeRing, layerCore, layerMid, layerOut;
         let activeHand = null;
         let currentState = 'SHIELD';
         
-        // 调试画布
+        // 调试 Canvas
         const debugCanvas = document.getElementById('debug-canvas');
         const debugCtx = debugCanvas.getContext('2d');
 
-        // === 1. Three.js 初始化 (保持特效不变) ===
-        function initThree() {
-            const container = document.getElementById('three-container');
-            const w = window.innerWidth; const h = window.innerHeight;
-            scene = new THREE.Scene();
-            camera3D = new THREE.PerspectiveCamera(60, w / h, 0.1, 100);
-            camera3D.position.z = 10;
-            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
-            renderer.setSize(w, h);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-            container.appendChild(renderer.domElement);
-            
-            // 辉光
-            const renderScene = new RenderPass(scene, camera3D);
-            const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 1.5, 0.4, 0.85);
-            bloomPass.strength = 2.0; bloomPass.radius = 0.5; bloomPass.threshold = 0;
-            composer = new EffectComposer(renderer);
-            composer.addPass(renderScene);
-            composer.addPass(bloomPass);
-
-            createMagicAssets();
-        }
-
-        // === 2. 魔法资产 ===
-        function createMagicAssets() {
-            const size = 1024;
-            const cvs = document.createElement('canvas'); cvs.width = size; cvs.height = size;
-            const ctx = cvs.getContext('2d');
-            
-            // 绘制高清纹理
-            ctx.translate(512, 512);
-            ctx.shadowBlur=10; ctx.shadowColor='white'; ctx.strokeStyle='white'; ctx.lineWidth=8;
-            
-            // 方阵
-            ctx.save();
-            for(let i=0; i<2; i++) { ctx.rotate(Math.PI/4); ctx.strokeRect(-280, -280, 560, 560); }
-            ctx.restore();
-            
-            // 符文圈
-            ctx.beginPath(); ctx.arc(0,0, 380, 0, Math.PI*2); ctx.stroke();
-            ctx.beginPath(); ctx.arc(0,0, 480, 0, Math.PI*2); ctx.stroke();
-            
-            // 随机符文
-            ctx.lineWidth=4;
-            for(let i=0; i<36; i++) {
-                ctx.save(); ctx.rotate(i*Math.PI*2/36); ctx.translate(0, -420);
-                ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.random()*20-10, 20); ctx.stroke();
-                ctx.restore();
-            }
-
-            const tex = new THREE.CanvasTexture(cvs);
-            const mat = new THREE.MeshBasicMaterial({ map: tex, color: 0xffaa00, transparent: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-
-            shieldGroup = new THREE.Group();
-            scene.add(shieldGroup);
-
-            layerCore = new THREE.Mesh(new THREE.PlaneGeometry(5,5), mat.clone());
-            layerMid = new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat.clone()); layerMid.position.z = 0.5;
-            layerOut = new THREE.Mesh(new THREE.PlaneGeometry(9,9), mat.clone()); layerOut.position.z = 1.0;
-            
-            timeRing = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.1, 16, 100), mat.clone()); timeRing.visible = false;
-
-            const pGeo = new THREE.BufferGeometry();
-            const pPos = new Float32Array(900);
-            for(let i=0; i<900; i++) pPos[i] = (Math.random()-0.5)*10;
-            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            particles = new THREE.Points(pGeo, new THREE.PointsMaterial({color:0xffaa00, size:0.1, transparent:true, blending:THREE.AdditiveBlending}));
-
-            shieldGroup.add(layerCore, layerMid, layerOut, timeRing, particles);
-            shieldGroup.visible = false;
-        }
-
-        // === 3. 启动逻辑 ===
-        window.startApp = async function() {
+        // === 1. 启动入口 ===
+        window.startApp = function() {
             document.getElementById('start-screen').style.display = 'none';
             initThree();
+            initMediaPipe();
             animate();
-            
+        };
+
+        // === 2. MediaPipe 初始化 ===
+        async function initMediaPipe() {
             const video = document.getElementById('input_video');
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             
@@ -204,6 +145,7 @@
                 minDetectionConfidence: 0.5,
                 minTrackingConfidence: 0.5
             });
+            
             hands.onResults(onResults);
 
             const cam = new Camera(video, {
@@ -211,168 +153,187 @@
                 width: 1280, height: 720
             });
             cam.start();
-        };
+        }
 
-        // === 4. 手势识别核心优化 (关键修改) ===
+        // === 3. 核心：手势处理与绘图 ===
         function onResults(results) {
-            // 1. 绘制调试骨架 (可视化)
-            debugCanvas.width = window.innerWidth; debugCanvas.height = window.innerHeight;
+            // 设置 Canvas 尺寸 (每一帧都重置，防止拉伸)
+            debugCanvas.width = window.innerWidth; 
+            debugCanvas.height = window.innerHeight;
             debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-            
-            // 镜像翻转 Canvas 以匹配视频
-            debugCtx.save();
-            debugCtx.scale(-1, 1);
-            debugCtx.translate(-debugCanvas.width, 0);
 
-            if (results.multiHandLandmarks.length > 0) {
-                document.getElementById('status-text').innerText = "已锁定目标";
-                document.getElementById('status-text').style.color = "#00ff00";
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // 状态更新
+                document.getElementById('hand-status').innerText = "LOCKED";
+                document.getElementById('hand-status').style.color = "#00ff00";
                 
                 const landmarks = results.multiHandLandmarks[0];
                 activeHand = landmarks;
                 shieldGroup.visible = true;
 
-                // 绘制骨架线
-                drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff00', lineWidth: 2});
-                drawLandmarks(debugCtx, landmarks, {color: '#ff0000', lineWidth: 1, radius: 3});
-
-                // === 智能手势算法 ===
-                
-                // A. 计算手掌参考大小 (手腕 -> 中指根)
-                // 这解决了“距离远近”导致误判的问题
-                const wrist = landmarks[0];
-                const middleBase = landmarks[9];
-                const palmSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y);
-                
-                document.getElementById('palm-size').innerText = palmSize.toFixed(3);
-
-                // B. 计算手指到手腕的平均距离
-                const tips = [8, 12, 16, 20]; // 食指、中指、无名指、小指尖
-                let totalTipDist = 0;
-                tips.forEach(idx => {
-                    totalTipDist += Math.hypot(landmarks[idx].x - wrist.x, landmarks[idx].y - wrist.y);
-                });
-                const avgTipDist = totalTipDist / 4;
-                
-                // 计算“紧凑度” = 指尖距离 / 手掌大小
-                // 张开手时，这个值通常 > 1.5
-                // 握拳时，这个值通常 < 0.8
-                const compactness = avgTipDist / palmSize;
-                document.getElementById('finger-dist').innerText = compactness.toFixed(2);
-
-                // C. 计算捏合距离 (拇指尖 -> 食指尖)
-                const thumbTip = landmarks[4];
-                const indexTip = landmarks[8];
-                const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-                const normalizedPinch = pinchDist / palmSize; // 归一化捏合值
-
-                // === 状态判定 ===
-                let newState = 'SHIELD';
-                const label = document.getElementById('gesture-indicator');
-
-                // 阈值判定 (比绝对距离更稳)
-                if (compactness < 0.9) { 
-                    newState = 'CHAOS'; // 握拳
-                    label.innerText = "CHAOS (毁灭)";
-                    label.style.color = "#ff0000";
-                } else if (normalizedPinch < 0.25) {
-                    newState = 'TIME'; // 捏合
-                    label.innerText = "TIME (时间)";
-                    label.style.color = "#00ff00";
-                } else {
-                    newState = 'SHIELD'; // 默认张开
-                    label.innerText = "SHIELD (护盾)";
-                    label.style.color = "#ffaa00";
+                // --- 1. 绘制骨架 (这是你要的可视化) ---
+                // 使用 try-catch 防止绘图库加载失败导致崩坏
+                try {
+                    if (window.drawConnectors && window.HAND_CONNECTIONS) {
+                        debugCtx.lineWidth = 3;
+                        drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff00'});
+                        drawLandmarks(debugCtx, landmarks, {color: '#ff0000', lineWidth: 2, radius: 4});
+                    }
+                } catch (e) {
+                    console.error("绘图错误:", e);
                 }
 
-                updateVisuals(newState);
-                updatePosition(landmarks, palmSize);
+                // --- 2. 手势计算 ---
+                const wrist = landmarks[0];
+                const middleBase = landmarks[9];
+                const palmSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y); // 手掌基准大小
+
+                // 握拳判定 (指尖到手腕平均距离)
+                const tips = [8, 12, 16, 20];
+                let tipSum = 0;
+                tips.forEach(i => tipSum += Math.hypot(landmarks[i].x - wrist.x, landmarks[i].y - wrist.y));
+                const openness = (tipSum / 4) / palmSize; // > 1.0 张开, < 0.6 握拳
+
+                // 捏合判定 (拇指到食指)
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y) / palmSize; // < 0.25 捏合
+
+                // UI 数据更新
+                document.getElementById('val-open').innerText = openness.toFixed(2);
+                document.getElementById('val-pinch').innerText = pinch.toFixed(2);
+
+                let newState = 'SHIELD';
+                const label = document.getElementById('gesture-name');
+
+                if (openness < 0.8) {
+                    newState = 'CHAOS';
+                    label.innerText = "CHAOS (FIST)";
+                    label.style.color = "red";
+                } else if (pinch < 0.3) {
+                    newState = 'TIME';
+                    label.innerText = "TIME (PINCH)";
+                    label.style.color = "#00ff00";
+                } else {
+                    newState = 'SHIELD';
+                    label.innerText = "SHIELD (OPEN)";
+                    label.style.color = "orange";
+                }
+
+                updateMagicState(newState, landmarks);
 
             } else {
-                document.getElementById('status-text').innerText = "搜索手部信号...";
-                document.getElementById('status-text').style.color = "#ffff00";
-                activeHand = null;
+                document.getElementById('hand-status').innerText = "SEARCHING";
+                document.getElementById('hand-status').style.color = "red";
+                document.getElementById('val-open').innerText = "0.0";
                 if(shieldGroup) shieldGroup.visible = false;
             }
-            debugCtx.restore();
         }
 
-        function updateVisuals(state) {
-            currentState = state;
-            let targetColor = new THREE.Color(0xffaa00);
+        // === 4. 特效逻辑 (Three.js) ===
+        function initThree() {
+            const container = document.getElementById('three-container');
+            scene = new THREE.Scene();
+            camera3D = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera3D.position.z = 10;
             
-            if(state === 'TIME') {
-                targetColor.setHex(0x00ff00);
-                timeRing.visible = true; layerCore.visible = false;
-            } else if (state === 'CHAOS') {
-                targetColor.setHex(0xff0000);
-                timeRing.visible = false; layerCore.visible = true;
-            } else {
-                targetColor.setHex(0xffaa00);
-                timeRing.visible = false; layerCore.visible = true;
-            }
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            container.appendChild(renderer.domElement);
 
-            layerCore.material.color.lerp(targetColor, 0.2);
-            layerMid.material.color.lerp(targetColor, 0.2);
-            layerOut.material.color.lerp(targetColor, 0.2);
-            particles.material.color.lerp(targetColor, 0.2);
-            timeRing.material.color.lerp(targetColor, 0.2);
+            const renderScene = new RenderPass(scene, camera3D);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.strength = 2.5; bloomPass.radius = 0.5; bloomPass.threshold = 0;
+            
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            createAssets();
         }
 
-        function updatePosition(landmarks, palmSize) {
-            // 映射位置
+        function createAssets() {
+            // 简单高清纹理
+            const cvs = document.createElement('canvas'); cvs.width=1024; cvs.height=1024;
+            const ctx = cvs.getContext('2d');
+            ctx.translate(512,512);
+            ctx.strokeStyle='white'; ctx.shadowColor='white'; ctx.shadowBlur=10; ctx.lineWidth=5;
+            // 绘制
+            ctx.save();
+            for(let i=0;i<2;i++) { ctx.rotate(Math.PI/4); ctx.strokeRect(-300,-300,600,600); }
+            ctx.restore();
+            ctx.beginPath(); ctx.arc(0,0,420,0,Math.PI*2); ctx.stroke();
+            
+            const tex = new THREE.CanvasTexture(cvs);
+            const mat = new THREE.MeshBasicMaterial({map:tex, color:0xffaa00, transparent:true, side:THREE.DoubleSide, blending:THREE.AdditiveBlending, depthWrite:false});
+            
+            shieldGroup = new THREE.Group();
+            scene.add(shieldGroup);
+            
+            layerCore = new THREE.Mesh(new THREE.PlaneGeometry(5,5), mat.clone());
+            layerMid = new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat.clone()); layerMid.position.z = 0.5;
+            layerOut = new THREE.Mesh(new THREE.PlaneGeometry(9,9), mat.clone()); layerOut.position.z = 1.0;
+            timeRing = new THREE.Mesh(new THREE.TorusGeometry(3, 0.1, 16, 60), mat.clone()); timeRing.visible=false;
+            
+            const pGeo = new THREE.BufferGeometry();
+            const pArr = new Float32Array(600);
+            for(let i=0;i<600;i++) pArr[i] = (Math.random()-0.5)*10;
+            pGeo.setAttribute('position', new THREE.BufferAttribute(pArr, 3));
+            particles = new THREE.Points(pGeo, new THREE.PointsMaterial({color:0xffaa00, size:0.1, transparent:true, blending:THREE.AdditiveBlending}));
+            
+            shieldGroup.add(layerCore, layerMid, layerOut, timeRing, particles);
+        }
+
+        function updateMagicState(state, landmarks) {
+            currentState = state;
+            let col = new THREE.Color(0xffaa00); // Orange
+            if(state==='TIME') { col.setHex(0x00ff00); timeRing.visible=true; layerCore.visible=false; }
+            else if(state==='CHAOS') { col.setHex(0xff0000); timeRing.visible=false; layerCore.visible=true; }
+            else { timeRing.visible=false; layerCore.visible=true; }
+
+            // 颜色插值
+            layerCore.material.color.lerp(col, 0.2);
+            layerMid.material.color.lerp(col, 0.2);
+            layerOut.material.color.lerp(col, 0.2);
+            particles.material.color.lerp(col, 0.2);
+            timeRing.material.color.lerp(col, 0.2);
+
+            // 位置映射
             const midBase = landmarks[9];
             const wrist = landmarks[0];
-            const midTip = landmarks[12];
-            
-            // 坐标转换 (MediaPipe 0-1 -> Three.js 视口)
-            // 假设 Z=10, 视口宽高约为 18x10
-            const x = (1 - midBase.x - 0.5) * 18; // 反转X
+            // MediaPipe x: 0-1, y: 0-1. 
+            // 屏幕中心是 (0.5, 0.5). ThreeJS 视口宽度~18, 高度~10
+            // 因为视频 scaleX(-1)，所以 x 坐标需要做对应反转逻辑：(1 - x)
+            // 但因为 canvas 也 scaleX(-1) 了，所以逻辑又负负得正了...
+            // 简单处理：
+            const x = (0.5 - midBase.x) * 18; 
             const y = -(midBase.y - 0.5) * 10;
             
             shieldGroup.position.lerp(new THREE.Vector3(x, y, 0), 0.2);
-
-            // 旋转 (基于手掌法线)
-            const tiltX = (midTip.y - wrist.y) * 4;
-            const tiltY = ((1-midTip.x) - (1-wrist.x)) * 4;
             
-            shieldGroup.rotation.x += (tiltX - shieldGroup.rotation.x) * 0.1;
-            shieldGroup.rotation.y += (tiltY - shieldGroup.rotation.y) * 0.1;
-
-            // 视差特效
-            layerMid.position.x = shieldGroup.rotation.y * 0.5;
-            layerOut.position.x = shieldGroup.rotation.y * 1.0;
-
-            // 缩放 (基于手掌大小自适应)
-            // palmSize 通常在 0.1 ~ 0.3 之间
-            let scale = palmSize * 20; 
-            if(currentState === 'CHAOS') scale *= 0.6; // 握拳变小
-            shieldGroup.scale.lerp(new THREE.Vector3(scale, scale, scale), 0.1);
+            const tiltX = (landmarks[12].y - wrist.y) * 3;
+            const tiltY = (landmarks[12].x - wrist.x) * 3;
+            shieldGroup.rotation.x += (tiltX - shieldGroup.rotation.x)*0.1;
+            shieldGroup.rotation.y += (tiltY - shieldGroup.rotation.y)*0.1;
         }
 
-        // === 5. 动画循环 ===
-        const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            const t = clock.getElapsedTime();
+            const t = performance.now() * 0.001;
+            document.getElementById('fps-counter').innerText = Math.round(1000 / ((t - (window.lastT||t))*1000) * 10 || 60); 
+            window.lastT = t;
+
+            let s = 1; 
+            if(currentState==='TIME') s=-2; 
+            if(currentState==='CHAOS') s=5;
             
-            let speed = 1;
-            if(currentState === 'TIME') speed = -2;
-            if(currentState === 'CHAOS') speed = 5;
-
-            layerCore.rotation.z = t * 0.2 * speed;
-            layerMid.rotation.z = -t * 0.15 * speed;
-            layerOut.rotation.z = t * 0.05 * speed;
-            timeRing.rotation.x = t * 2;
-            timeRing.rotation.y = t * 0.5;
-
-            // 握拳时粒子抖动
-            if(currentState === 'CHAOS') {
-                 const pPos = particles.geometry.attributes.position.array;
-                 for(let i=0; i<pPos.length; i++) pPos[i] += (Math.random()-0.5)*0.1;
-                 particles.geometry.attributes.position.needsUpdate = true;
+            if(shieldGroup) {
+                layerCore.rotation.z = t * 0.2 * s;
+                layerMid.rotation.z = -t * 0.15 * s;
+                layerOut.rotation.z = t * 0.05 * s;
+                timeRing.rotation.x = t; timeRing.rotation.y = t*0.5;
             }
-
             composer.render();
         }
 
