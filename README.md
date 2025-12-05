@@ -1,2 +1,2 @@
 # Gesture interaction
-奇异博士魔法阵手势操作特效
+手势交互操作特效
