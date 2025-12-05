@@ -3,33 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Cosmic Hand Galaxy - AR</title>
+    <title>Cosmic Hand Galaxy - Manual Load</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
-        /* 隐藏原始摄像头画面 */
-        #video-input { position: absolute; opacity: 0; pointer-events: none; z-index: -1; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', monospace; }
         
-        /* UI 提示层 */
-        #ui-layer {
+        /* 拖拽区域 UI */
+        #drop-zone {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9);
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            pointer-events: none; z-index: 10;
-            background: rgba(0,0,0,0.6); transition: opacity 0.5s;
+            z-index: 100; color: #ffd700; text-align: center;
+            transition: opacity 0.5s;
         }
-        .loader {
-            width: 50px; height: 50px; border: 5px solid rgba(255,255,255,0.2);
-            border-top-color: #ffd700; border-radius: 50%;
-            animation: spin 1s infinite linear; margin-bottom: 20px;
+        .box {
+            border: 2px dashed #ffd700; padding: 40px; border-radius: 10px;
+            background: rgba(255, 215, 0, 0.1);
+            max-width: 80%;
         }
-        @keyframes spin { 0% {transform: rotate(0deg);} 100% {transform: rotate(360deg);} }
-        #status {
-            color: white; font-family: monospace; font-size: 16px; text-align: center;
-            text-shadow: 0 0 10px #000;
-        }
-        .hidden { opacity: 0; pointer-events: none; }
+        h1 { margin: 0 0 10px 0; font-size: 24px; text-shadow: 0 0 10px #ffd700; }
+        p { color: #aaa; margin: 5px 0; }
+        .highlight { background: rgba(255, 215, 0, 0.2); border-color: #fff; }
+        
+        #video-input { position: absolute; opacity: 0; pointer-events: none; }
+        #log { position: absolute; bottom: 10px; left: 10px; color: lime; font-size: 12px; z-index: 50; pointer-events: none; }
     </style>
-
-    <!-- 1. 使用国内稳定的 jsDelivr 加载库文件 -->
+    
     <script type="importmap">
         {
             "imports": {
@@ -42,11 +40,18 @@
 </head>
 <body>
 
-    <div id="ui-layer">
-        <div class="loader" id="spinner"></div>
-        <div id="status">Loading AI Model...<br><span style="font-size:12px;color:#aaa">(Please allow camera)</span></div>
+    <!-- 拖拽交互层 -->
+    <div id="drop-zone">
+        <div class="box" id="drop-box">
+            <h1>🖐 启动星系引擎</h1>
+            <p>由于网络限制，需要手动加载模型。</p>
+            <p style="color: white; font-weight: bold; margin-top: 20px;">
+                请把桌面上的 "hand_landmarker.task" 文件<br>拖拽到这里！
+            </p>
+        </div>
     </div>
 
+    <div id="log">Waiting for manual injection...</div>
     <video id="video-input" playsinline autoplay></video>
 
     <script type="module">
@@ -56,132 +61,145 @@
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
         import { FilesetResolver, Hands } from '@mediapipe/tasks-vision';
 
-        // --- 1. 3D 场景初始化 ---
-        const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x050011, 0.002);
+        // --- UI 逻辑 ---
+        const dropZone = document.getElementById('drop-zone');
+        const dropBox = document.getElementById('drop-box');
+        const logDiv = document.getElementById('log');
 
+        function log(msg) { logDiv.innerHTML += "<br>" + msg; }
+
+        // 拖拽事件监听
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+
+        dropZone.addEventListener('dragenter', () => dropBox.classList.add('highlight'));
+        dropZone.addEventListener('dragleave', () => dropBox.classList.remove('highlight'));
+        
+        // 核心：处理文件放置
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            dropBox.classList.remove('highlight');
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.includes('.task')) {
+                    log(`Received file: ${file.name}`);
+                    dropBox.innerHTML = "<h1>🚀 Loading...</h1><p>Injecting model into memory...</p>";
+                    // 创建本地 Blob URL，绕过网络下载
+                    const objectUrl = URL.createObjectURL(file);
+                    initAI(objectUrl);
+                } else {
+                    alert("请拖入正确的 .task 文件！");
+                }
+            }
+        }
+
+        // --- 1. Three.js 场景 ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x020008, 0.002);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.z = 5;
-
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
-        // --- 2. 辉光特效 ---
         const composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(scene, camera));
-        composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.0, 0.5, 0.1));
+        composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 0.5, 0.1));
 
-        // --- 3. 创建星系 ---
+        // 粒子系统
         const particleCount = 40000;
         const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
         const randoms = new Float32Array(particleCount * 3);
-
-        const colorInside = new THREE.Color(0xffd700);
-        const colorOutside = new THREE.Color(0x2e003e);
+        const colorInside = new THREE.Color(0xffaa00);
+        const colorOutside = new THREE.Color(0x2e004d);
 
         for (let i = 0; i < particleCount; i++) {
             const i3 = i * 3;
-            const radius = Math.random() * 5;
-            const spinAngle = radius * 4;
-            const branchAngle = (i % 3) * ((2 * Math.PI) / 3);
-
-            const x = Math.cos(branchAngle + spinAngle) * radius + (Math.random() - 0.5) * 0.8;
-            const y = (Math.random() - 0.5) * 0.5;
-            const z = Math.sin(branchAngle + spinAngle) * radius + (Math.random() - 0.5) * 0.8;
-
-            positions[i3] = x; positions[i3+1] = y; positions[i3+2] = z;
+            const r = Math.random() * 5;
+            const angle = r * 4 + (i % 3) * 2;
+            positions[i3] = Math.cos(angle)*r + (Math.random()-0.5);
+            positions[i3+1] = (Math.random()-0.5)*0.5;
+            positions[i3+2] = Math.sin(angle)*r + (Math.random()-0.5);
             
-            const mixedColor = colorInside.clone().lerp(colorOutside, radius / 5);
-            colors[i3] = mixedColor.r; colors[i3+1] = mixedColor.g; colors[i3+2] = mixedColor.b;
-
+            const c = colorInside.clone().lerp(colorOutside, r/5);
+            colors[i3] = c.r; colors[i3+1] = c.g; colors[i3+2] = c.b;
             randoms[i3] = Math.random(); randoms[i3+1] = Math.random(); randoms[i3+2] = Math.random();
         }
-
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 3));
 
         const material = new THREE.ShaderMaterial({
             vertexShader: `
-                uniform float uTime;
-                uniform vec3 uTarget;
-                uniform float uPinch;
-                attribute vec3 color;
-                attribute vec3 aRandom;
-                varying vec3 vColor;
+                uniform float uTime; uniform vec3 uTarget; uniform float uPinch;
+                attribute vec3 color; attribute vec3 aRandom; varying vec3 vColor;
                 void main() {
                     vColor = color;
                     vec3 pos = position;
-                    // 旋转
-                    float angle = uTime * 0.2 * (1.0 / (length(pos) + 0.1));
+                    float angle = uTime * 0.2 * (1.0/(length(pos)+0.1));
                     float c = cos(angle); float s = sin(angle);
-                    vec3 rotPos = vec3(pos.x * c - pos.z * s, pos.y, pos.x * s + pos.z * c);
-                    
-                    // 跟随与变形
-                    vec3 finalPos = rotPos + uTarget;
+                    vec3 rot = vec3(pos.x*c - pos.z*s, pos.y, pos.x*s + pos.z*c);
+                    vec3 final = rot + uTarget;
                     if(uPinch > 0.0) {
-                        finalPos = mix(finalPos, uTarget, uPinch * (0.8 + aRandom.x * 0.5));
-                        finalPos += (aRandom - 0.5) * uPinch * 0.3;
+                        final = mix(final, uTarget, uPinch * (0.8 + aRandom.x));
+                        final += (aRandom - 0.5) * uPinch * 0.5;
                     }
-                    
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(finalPos, 1.0);
-                    gl_PointSize = (25.0 * aRandom.x + 5.0) * (1.0 / -gl_Position.z);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(final, 1.0);
+                    gl_PointSize = (20.0 * aRandom.x + 5.0) / -gl_Position.z;
                 }
             `,
             fragmentShader: `
                 varying vec3 vColor;
                 void main() {
                     float d = distance(gl_PointCoord, vec2(0.5));
-                    if(d > 0.5) discard;
-                    float strength = pow(1.0 - d * 2.0, 3.0);
-                    gl_FragColor = vec4(vColor * 2.0, strength);
+                    if(d>0.5) discard;
+                    gl_FragColor = vec4(vColor * 2.0, pow(1.0-d*2.0, 3.0));
                 }
             `,
             uniforms: { uTime: { value: 0 }, uTarget: { value: new THREE.Vector3() }, uPinch: { value: 0 } },
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
         });
+        scene.add(new THREE.Points(geometry, material));
 
-        const galaxy = new THREE.Points(geometry, material);
-        scene.add(galaxy);
-
-        // --- 4. 关键：加载本地手势模型 ---
-        const video = document.getElementById('video-input');
-        const ui = document.getElementById('ui-layer');
-        const status = document.getElementById('status');
+        // --- 2. AI 初始化 (手动注入) ---
         let handLandmarker;
         let lastVideoTime = -1;
+        const video = document.getElementById('video-input');
         
         let targetPos = new THREE.Vector3();
         let currentPos = new THREE.Vector3();
-        let targetPinch = 0;
-        let currentPinch = 0;
+        let pinch = 0;
 
-        async function initAI() {
+        async function initAI(modelUrl) {
             try {
-                // 1. WASM 文件走 jsDelivr (速度快)
+                log("Initializing FilesetResolver (CDN)...");
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
                 );
                 
-                // 2. 模型文件走本地 GitHub 仓库 (不被墙！)
+                log("Loading Model from Local Blob...");
                 handLandmarker = await Hands.createFromOptions(vision, {
                     baseOptions: {
-                        modelAssetPath: "./hand_landmarker.task", // <--- 关键修改
+                        modelAssetPath: modelUrl, // <--- 这里直接用你拖进去的文件
                         delegate: "GPU"
                     },
                     runningMode: "VIDEO",
                     numHands: 1
                 });
 
-                status.innerHTML = "Camera Starting...";
+                log("Model Loaded! Requesting Camera...");
                 startCamera();
-            } catch (error) {
-                status.innerHTML = "Error:<br>" + error.message;
-                status.style.color = "red";
+            } catch (err) {
+                log("Error: " + err.message);
+                dropBox.innerHTML = `<h1>❌ Error</h1><p>${err.message}</p>`;
             }
         }
 
@@ -189,63 +207,52 @@
             navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
                 video.srcObject = stream;
                 video.addEventListener("loadeddata", () => {
-                    ui.classList.add('hidden'); // 隐藏加载层
+                    log("Camera Active. Starting loop.");
+                    dropZone.style.opacity = 0; // 成功后隐藏界面
+                    setTimeout(() => dropZone.style.display = 'none', 500);
                     predict();
                 });
             }).catch(err => {
-                status.innerHTML = "Camera Denied!<br>Please allow access.";
+                log("Camera Error: " + err.message);
+                alert("请允许摄像头权限！");
             });
         }
 
         function predict() {
             if (handLandmarker && video.currentTime !== lastVideoTime) {
                 lastVideoTime = video.currentTime;
-                const results = handLandmarker.detectForVideo(video, performance.now());
-                
-                if (results.landmarks.length > 0) {
-                    const lm = results.landmarks[0];
-                    // 坐标映射：镜像翻转 + 缩放
+                const result = handLandmarker.detectForVideo(video, performance.now());
+                if(result.landmarks.length > 0) {
+                    const lm = result.landmarks[0];
                     const x = (1 - lm[9].x) * 2 - 1;
                     const y = -(lm[9].y * 2 - 1);
-                    targetPos.set(x * 6, y * 3.5, 0);
-
-                    // 捏合检测
-                    const dist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
-                    targetPinch = dist < 0.06 ? 1.0 : 0.0;
-                } else {
-                    targetPinch = 0;
+                    targetPos.set(x*6, y*3.5, 0);
+                    const d = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y);
+                    pinch += ((d<0.06?1:0) - pinch) * 0.1;
                 }
             }
             requestAnimationFrame(predict);
         }
 
-        // --- 5. 动画循环 ---
         const clock = new THREE.Clock();
         function animate() {
             const dt = clock.getElapsedTime();
             currentPos.lerp(targetPos, 0.1);
-            currentPinch += (targetPinch - currentPinch) * 0.1;
-
             material.uniforms.uTime.value = dt;
             material.uniforms.uTarget.value = currentPos;
-            material.uniforms.uPinch.value = currentPinch;
-            
+            material.uniforms.uPinch.value = pinch;
             scene.rotation.y = currentPos.x * 0.1;
-            scene.rotation.x = -currentPos.y * 0.1;
-
             composer.render();
             requestAnimationFrame(animate);
         }
-        
+        animate();
+
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.aspect = window.innerWidth/window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
             composer.setSize(window.innerWidth, window.innerHeight);
         });
-
-        initAI();
-        animate();
     </script>
 </body>
 </html>
